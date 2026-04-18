@@ -1,6 +1,6 @@
 # bash-labs
 
-A lab for bash scriptingo
+A lab for bash scripting
 
 ---
 
@@ -9,5 +9,6 @@ A lab for bash scriptingo
 | Script   | Description                                                                                    |
 | -------- | ---------------------------------------------------------------------------------------------- |
 | `repodu` | Fetches the size of a GitHub repository via the GitHub API and calculates human-readable units |
+| `dfetch` | Summarizes local Docker host resources and container statistics                                |
 
 ---

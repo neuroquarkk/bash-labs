@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+
+set -eu
+
+declare info
+declare verbose=false
+
+show_help() {
+    cat <<EOF
+Usage: $(basename "$0") [OPTIONS]
+
+Provides a summary of local Docker environment
+including host OS details, resource limits and container statistics
+
+Options:
+  -v, --verbose   Show detailed table of running containers
+  -h, --help      Display this help message and quit
+EOF
+}
+
+extract_field() {
+    local field="$1"
+    # jq -r -> output raw strings instead of json encoded strings
+    # --arg -f "$field" -> pass bash vars into jq
+    jq -r --arg f "$field" '.[$f]' <<<"$info"
+}
+
+bytes_to_gb() {
+    local bytes="$1"
+    local gb=$((bytes / 1024 / 1024 / 1024))
+    echo "$gb"
+}
+
+show_container_details() {
+    echo "---------------------------------"
+    echo "Container Details"
+    echo "---------------------------------"
+
+    local running_ids
+    running_ids=$(docker ps -q)
+
+    if [[ -z "$running_ids" ]]; then
+        echo "  No running containers"
+    else
+        printf "  %-15s %-20s %-25s %-15s %s\n" "CONTAINER ID" "NAME" "IMAGE" "STATUS" "PORTS"
+        echo "  ------------------------------------------------------------------------------------------------------"
+
+        # ask docker for raw tab separated output to avoid its default spacing rules
+        # read each column into its own bash var
+        while IFS=$'\t' read -r id name image status ports; do
+            if [[ -n "$ports" ]]; then
+                # sed -> removes ip bindings (0.0.0.0:, [::]:) and protocols
+                # tr & sort -> split commands into new lines, remove spaces and deduplicates identical ports
+                # paste & sed -> re-join list with commans and adds clean space after each comma
+                ports=$(echo "$ports" | sed -e 's/0\.0\.0\.0://g' -e 's/\[::\]://g' -e 's/\/tcp//g' -e 's/\/udp//g' | tr ',' '\n' | tr -d ' ' | sort -u | paste -sd ',' - | sed 's/,/, /g')
+                printf "  %-15.15s %-20.20s %-25.25s %-15.15s %s\n" "$id" "$name" "$image" "$status" "$ports"
+                echo "  ------------------------------------------------------------------------------------------------------"
+            fi
+
+        done < <(docker ps --format '{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}')
+    fi
+
+    echo ""
+}
+
+main() {
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        -h | --help | help)
+            show_help
+            exit 0
+            ;;
+        -v | --verbose)
+            verbose=true
+            shift
+            ;;
+        *)
+            echo "Error: Unknown option: $1"
+            exit 1
+            ;;
+        esac
+    done
+
+    if ! command -v docker >/dev/null; then
+        echo "Error: docker not found"
+        exit 1
+    fi
+
+    if ! docker info >/dev/null; then
+        echo "Error: docker daemon is not running"
+        exit 1
+    fi
+
+    info=$(docker info --format "{{json .}}")
+
+    local containers containers_running containers_stopped containers_paused
+    local images os cpus arch mem_bytes mem_gb version
+
+    containers=$(extract_field "Containers")
+    containers_running=$(extract_field "ContainersRunning")
+    containers_paused=$(extract_field "ContainersPaused")
+    containers_stopped=$(extract_field "ContainersStopped")
+
+    images=$(extract_field "Images")
+    os=$(extract_field "OperatingSystem")
+    cpus=$(extract_field "NCPU")
+    arch=$(extract_field "Architecture")
+    version=$(docker version --format '{{.Server.Version}}')
+
+    mem_bytes=$(extract_field "MemTotal")
+    mem_gb=$(bytes_to_gb "$mem_bytes")
+
+    echo ""
+    echo "Docker Environment Info"
+    echo "================================="
+    printf "%-20s %s\n" "Docker Version:" "$version"
+    printf "%-20s %s\n" "Operating System:" "$os"
+    printf "%-20s %s\n" "CPU Cores:" "$cpus"
+    printf "%-20s %s\n" "Architecture:" "$arch"
+    printf "%-20s %s GB\n" "Memory Allocated:" "$mem_gb"
+    echo "---------------------------------"
+    printf "%-20s %s\n" "Total Images:" "$images"
+    printf "%-20s %s\n" "Total Containers:" "$containers"
+    printf "  %-18s %s\n" "Running:" "$containers_running"
+    printf "  %-18s %s\n" "Paused:" "$containers_paused"
+    printf "  %-18s %s\n" "Stopped:" "$containers_stopped"
+    echo ""
+
+    if [[ "$verbose" == true ]]; then
+        show_container_details
+    fi
+
+    echo "================================="
+    echo ""
+}
+
+main "$@"
